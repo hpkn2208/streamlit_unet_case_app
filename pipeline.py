@@ -34,8 +34,8 @@ PALETTE = {
 }
 
 MODEL_CHOICES = {
-    "unet": "Plain UNet only",
-    "attention": "Attention UNet only (UNet++/scSE)",
+    "unet": "Plain UNet",
+    "attention": "Attention UNet (UNet++/scSE)",
 }
 _MODEL_VERSION_FOR_CHOICE = {
     "unet": "yolo_best+unet5fold-v1",
