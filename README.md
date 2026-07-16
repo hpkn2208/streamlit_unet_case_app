@@ -1,6 +1,6 @@
 # 🦷 Lichen Case Dashboard
 
-**AI-assisted patient case tracking for oral lichen planus screening — YOLOv8 lesion detection + dual UNet segmentation ensembles, in a single deployable Streamlit app.**
+**AI-assisted patient case tracking for oral lichen planus screening — YOLOv8 lesion detection + a 5-fold UNet segmentation ensemble, in a single deployable Streamlit app.**
 
 No login, no database server, no Docker. Clone it, drop in your model weights, and it runs.
 
@@ -10,17 +10,16 @@ No login, no database server, no Docker. Clone it, drop in your model weights, a
 
 ## What it does
 
-Upload one or more intraoral photos for a patient, and the app runs a two-stage pipeline — a YOLOv8-seg lesion detector gates the crop, then a segmentation ensemble classifies every pixel as **lichen planus**, **other lesion**, or **normal mucosa**. Results are saved as a case you can revisit, annotate, and re-analyze.
+Upload one or more intraoral photos for a patient, and the app runs a two-stage pipeline — a YOLOv8-seg lesion detector gates the crop, then a 5-fold UNet ensemble classifies every pixel as **lichen planus**, **other lesion**, or **normal mucosa**. Results are saved as a case you can revisit and annotate.
 
 | | |
 |---|---|
 | 🖼️ **Multi-image cases** | Upload a full set of photos per patient in one pass |
-| 🧠 **Two swappable ensembles** | Plain 5-fold UNet *or* a 5-fold Attention UNet (UNet++ with scSE attention gates) — pick per analysis |
-| 🔁 **Re-analyze on demand** | Already ran with one ensemble? Re-run the same case through the other with one click, no re-upload |
-| 🗳️ **Explainable conclusions** | Case-level verdict is a majority vote across images, with the vote breakdown and per-class confidence shown in plain language |
+| 🧠 **5-fold UNet ensemble** | EfficientNet-B0 encoder, softmax-averaged across folds + test-time augmentation |
+| 🩺 **Safety-first conclusions** | Case-level verdict prioritizes any *reliable* positive finding over normal readings elsewhere — a single confident lichen call isn't diluted by other normal images. Low-confidence findings (<50%) are explicitly flagged and can't decide the case alone |
 | 🎨 **Color-coded overlays** | Red / amber pixel overlays on the source image, toggleable against the original |
 | 📝 **Clinical notes** | Timestamped free-text notes per case |
-| ⚡ **Warm start** | Every model loads once when the app boots, so the first analysis isn't stuck behind a cold load |
+| ⚡ **Warm start** | The model loads once when the app boots, so the first analysis isn't stuck behind a cold load |
 | 🗑️ **One-click reset** | Guarded "danger zone" control to wipe all demo/pilot data |
 
 ---
@@ -34,7 +33,7 @@ Upload one or more intraoral photos for a patient, and the app runs a two-stage 
                         │
                         ▼
         ┌───────────────────────────────┐
-        │   Plain UNet   OR   Attention UNet   │  5-fold ensemble + TTA
+        │     5-fold UNet ensemble       │  softmax-averaged across folds + TTA
         │  (EfficientNet-B0 encoder)     │  (horizontal/vertical flip averaging)
         └───────────────┬───────────────┘
                         │
@@ -45,19 +44,18 @@ Upload one or more intraoral photos for a patient, and the app runs a two-stage 
    overlay + area %  +  per-image label  +  confidence
                         │
                         ▼
-        case-level conclusion = majority vote across all
-              images in the case (ties broken by confidence)
+   case-level conclusion: most severe RELIABLE finding wins
+   (lichen > other lesion > normal — each requires ≥50% confidence
+    in at least one image, else falls back to majority vote)
 ```
-
-Both segmentation architectures share the same YOLO gate, encoder backbone, input resolution, and test-time augmentation — the only difference is the decoder (plain UNet vs. UNet++ with [scSE](https://arxiv.org/abs/1803.02579) attention blocks), so results are directly comparable.
 
 ---
 
 ## Screens
 
 - **Dashboard** — case list with live stats (total / pending / lichen-positive), one click into any case
-- **New Case** — patient code + drag-and-drop multi-image upload, ensemble picker, adjustable inference thresholds
-- **Case Detail** — per-image overlay/original toggle, confidence + area breakdown, conclusion reasoning, notes, and the re-analyze control
+- **New Case** — patient code + drag-and-drop multi-image upload, adjustable inference thresholds
+- **Case Detail** — per-image overlay/original toggle, confidence + area breakdown, conclusion reasoning, notes
 
 ---
 
@@ -87,11 +85,10 @@ Not included in this repo — supply your own trained checkpoints in this layout
 models/
 ├── yolo_best.pt
 └── unet_folds/
-    ├── UNet_fold0_best.pth  …  UNet_fold4_best.pth              (plain UNet, 5-fold CV)
-    └── UNet++_+_scSE_fold0_best.pth  …  UNet++_+_scSE_fold4_best.pth   (attention UNet, 5-fold CV)
+    └── UNet_fold0_best.pth  …  UNet_fold4_best.pth   (5-fold cross-validation)
 ```
 
-Both UNet variants expect an EfficientNet-B0 encoder, 3-class output (normal / lichen / other), 256×256 input. Missing a few folds is fine — the ensemble just averages over whatever it finds. If an entire ensemble is missing, selecting it in the model picker will show a clear error rather than fail silently.
+Expects an EfficientNet-B0 encoder, 3-class output (normal / lichen / other), 256×256 input. Missing a few folds is fine — the ensemble just averages over whatever it finds.
 
 ---
 
@@ -99,9 +96,9 @@ Both UNet variants expect an EfficientNet-B0 encoder, 3-class output (normal / l
 
 No Docker, no server to manage:
 
-1. Push this repo to GitHub (weights included — a full set of both ensembles is ~270 MB, well under GitHub's limits)
+1. Push this repo to GitHub (weights included — a full set is ~140 MB, well under GitHub's limits)
 2. [share.streamlit.io](https://share.streamlit.io) → sign in with GitHub → **New app**
-3. Point it at this repo, branch `main`, main file `Dashboard.py`
+3. Point it at this repo, branch `main`, **main file path: `Dashboard.py`** (not `pipeline.py` — that's just the inference logic, it has no UI)
 4. Deploy
 
 Runs on CPU on the free tier — a few seconds per image instead of ~1s on GPU. No code changes needed; the pipeline already has an automatic CUDA→CPU fallback.
@@ -114,9 +111,9 @@ Runs on CPU on the free tier — a few seconds per image instead of ~1s on GPU. 
 streamlit_case_app/
 ├── Dashboard.py              # entry point — case list, stats, eager model load, danger zone
 ├── pages/
-│   ├── 1_New_Case.py         # upload + ensemble choice + run inference
-│   └── 2_Case_Detail.py      # results, overlay toggle, notes, re-analyze
-├── pipeline.py                # YOLO gate + dual UNet ensembles, framework-agnostic
+│   ├── 1_New_Case.py         # upload + run inference
+│   └── 2_Case_Detail.py      # results, overlay toggle, notes
+├── pipeline.py                # YOLO gate + UNet ensemble, framework-agnostic
 ├── db.py                     # SQLite persistence — cases, images, detections, notes
 ├── models/                   # your trained weights (see above)
 ├── requirements.txt

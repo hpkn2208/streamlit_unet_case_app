@@ -6,16 +6,15 @@ case workflow (dashboard / new case / case detail), no login required.
 import streamlit as st
 
 from db import delete_all_cases, init_db, list_cases
-from pipeline import load_attention_unet_ensemble, load_unet_ensemble, load_yolo
+from pipeline import load_unet_ensemble, load_yolo
 
 st.set_page_config(page_title="Lichen Detection — Case Dashboard", layout="wide")
 init_db()
 
 if "models_loaded" not in st.session_state:
-    with st.spinner("Loading AI models (YOLO gate + UNet + Attention UNet ensembles)…"):
+    with st.spinner("Loading AI models (YOLO gate + UNet ensemble)…"):
         load_yolo()
         load_unet_ensemble()
-        load_attention_unet_ensemble()
     st.session_state["models_loaded"] = True
 
 STATUS_LABEL = {"pending": "Pending", "analyzed": "Analyzed", "reviewed": "Reviewed", "finalized": "Finalized"}

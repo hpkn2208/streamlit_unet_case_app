@@ -1,18 +1,6 @@
-import cv2
-import numpy as np
 import streamlit as st
-from PIL import Image
 
-from db import (
-    CONCLUSION_COLOR,
-    add_note,
-    conclusion_reason,
-    derive_overall_conclusion,
-    get_case,
-    update_case_conclusion,
-    update_detection,
-)
-from pipeline import MODEL_CHOICES, other_model_choice, run_inference
+from db import CONCLUSION_COLOR, add_note, conclusion_reason, get_case
 
 st.set_page_config(page_title="Case Detail — Lichen Detection", layout="wide")
 
@@ -70,25 +58,6 @@ if reason_labels:
         f"<span style='color:{reason_color}'>{conclusion_reason(reason_labels, reason_confidences)}</span>",
         unsafe_allow_html=True,
     )
-
-current_model_version = next((img["detection"]["model_version"] for img in images if img["detection"]), None)
-if current_model_version:
-    target_choice = other_model_choice(current_model_version)
-    st.caption(f"Analyzed with: `{current_model_version}`")
-    if st.button(f"🔄 Re-analyze this case with {MODEL_CHOICES[target_choice]}"):
-        with st.spinner(f"Re-analyzing {len(images)} image(s) with {MODEL_CHOICES[target_choice]}…"):
-            labels, confidences = [], []
-            for img in images:
-                img_pil = Image.open(img["image_path"]).convert("RGB")
-                img_rgb = np.array(img_pil)
-                img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-                new_detection = run_inference(img_rgb, img_bgr, model_choice=target_choice)
-                update_detection(img["id"], new_detection)
-                labels.append(new_detection["predicted_label"])
-                confidences.append(new_detection["confidence_score"])
-            update_case_conclusion(case_id, derive_overall_conclusion(labels, confidences))
-        st.success("Re-analysis complete.")
-        st.rerun()
 
 st.divider()
 

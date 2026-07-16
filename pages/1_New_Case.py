@@ -4,7 +4,7 @@ import streamlit as st
 from PIL import Image
 
 from db import create_case
-from pipeline import MODEL_CHOICES, run_inference
+from pipeline import run_inference
 
 st.set_page_config(page_title="New Case — Lichen Detection", layout="wide")
 
@@ -21,14 +21,6 @@ uploaded_files = st.file_uploader(
     "Upload oral images (PNG / JPG)", type=["png", "jpg", "jpeg"], accept_multiple_files=True
 )
 
-model_choice_label = st.radio(
-    "Segmentation model",
-    options=list(MODEL_CHOICES.values()),
-    index=0,
-    horizontal=True,
-)
-model_choice = next(k for k, v in MODEL_CHOICES.items() if v == model_choice_label)
-
 with st.expander("Inference settings (defaults work well)"):
     yolo_conf = st.slider("YOLO confidence threshold", 0.05, 0.50, 0.15, 0.05)
     yolo_padding = st.slider("YOLO crop padding (px)", 0, 100, 40, 10)
@@ -41,7 +33,7 @@ can_analyze = bool(uploaded_files) and bool(patient_code.strip())
 
 if st.button("Analyze", type="primary", disabled=not can_analyze):
     images_payload = []
-    progress = st.progress(0.0, text=f"Running YOLO gate + {model_choice_label}…")
+    progress = st.progress(0.0, text="Running YOLO gate + 5-fold UNet ensemble…")
 
     for i, uf in enumerate(uploaded_files):
         img_pil = Image.open(uf).convert("RGB")
@@ -53,7 +45,6 @@ if st.button("Analyze", type="primary", disabled=not can_analyze):
                 img_rgb, img_bgr,
                 use_yolo_gate=use_yolo_gate, yolo_conf=yolo_conf, yolo_padding=yolo_padding,
                 lichen_thresh=lichen_thresh, use_tta=use_tta, min_blob_px=min_blob_px,
-                model_choice=model_choice,
             )
         except RuntimeError as exc:
             st.error(str(exc))

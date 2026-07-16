@@ -207,38 +207,6 @@ def create_case(patient_code: str, images: list[dict]) -> str:
     return case_id
 
 
-def update_detection(image_id: str, detection: dict) -> None:
-    """Overwrites an existing image's detection result (used when re-analyzing with a different model)."""
-    conn = _get_conn()
-    row = conn.execute("SELECT overlay_path FROM detections WHERE image_id = ?", (image_id,)).fetchone()
-    overlay_path = Path(row["overlay_path"]) if row else IMAGES_DIR / f"{image_id}_overlay.png"
-    Image.fromarray(detection["overlay_rgb"]).save(overlay_path)
-
-    conn.execute(
-        """UPDATE detections SET
-               yolo_detected = ?, yolo_boxes = ?, lichen_pct = ?, other_pct = ?,
-               predicted_label = ?, confidence_score = ?, model_version = ?
-           WHERE image_id = ?""",
-        (
-            int(detection["yolo_detected"]), json.dumps(detection["yolo_boxes"]),
-            detection["lichen_pct"], detection["other_pct"], detection["predicted_label"],
-            detection["confidence_score"], detection["model_version"], image_id,
-        ),
-    )
-    conn.commit()
-    conn.close()
-
-
-def update_case_conclusion(case_id: str, overall_conclusion: str) -> None:
-    conn = _get_conn()
-    conn.execute(
-        "UPDATE cases SET overall_conclusion = ?, status = 'analyzed' WHERE id = ?",
-        (overall_conclusion, case_id),
-    )
-    conn.commit()
-    conn.close()
-
-
 def list_cases() -> list[dict]:
     conn = _get_conn()
     rows = conn.execute(

@@ -33,21 +33,7 @@ PALETTE = {
     2: np.array([217, 119, 6], dtype=np.uint8),   # other  — amber
 }
 
-MODEL_CHOICES = {
-    "unet": "Plain UNet",
-    "attention": "Attention UNet (UNet++/scSE)",
-}
-_MODEL_VERSION_FOR_CHOICE = {
-    "unet": "yolo_best+unet5fold-v1",
-    "attention": "yolo_best+attn-unet5fold-v1",
-}
-_CHOICE_FOR_MODEL_VERSION = {v: k for k, v in _MODEL_VERSION_FOR_CHOICE.items()}
-
-
-def other_model_choice(model_version: str) -> str:
-    """Given the model_version a case was analyzed with, return the other available choice."""
-    current = _CHOICE_FOR_MODEL_VERSION.get(model_version, "unet")
-    return "attention" if current == "unet" else "unet"
+MODEL_VERSION = "yolo_best+unet5fold-v1"
 
 _NORM = A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
 val_tf = A.Compose([_NORM, ToTensorV2()])
@@ -76,48 +62,20 @@ def _build_unet() -> torch.nn.Module:
     )
 
 
-def _build_attention_unet() -> torch.nn.Module:
-    """UNet++ with scSE (spatial + channel squeeze-excitation) attention in the decoder."""
-    return smp.UnetPlusPlus(
-        encoder_name="efficientnet-b0",
-        encoder_weights=None,
-        in_channels=3,
-        classes=NUM_CLASSES,
-        decoder_dropout=0.5,
-        decoder_attention_type="scse",
-    )
-
-
-def _load_fold_ensemble(unet_dir: str, n_folds: int, device: torch.device, filename_prefix: str, build_fn):
+@lru_cache(maxsize=2)
+def load_unet_ensemble(unet_dir: str = str(UNET_DIR), n_folds: int = N_FOLDS, device_str: str = str(DEVICE)):
+    device = torch.device(device_str)
     models = []
     for k in range(n_folds):
-        ckpt = Path(unet_dir) / f"{filename_prefix}_fold{k}_best.pth"
+        ckpt = Path(unet_dir) / f"UNet_fold{k}_best.pth"
         if not ckpt.exists():
-            logger.warning("%s fold %d checkpoint not found: %s", filename_prefix, k, ckpt)
+            logger.warning("UNet fold %d checkpoint not found: %s", k, ckpt)
             continue
-        m = build_fn().to(device)
+        m = _build_unet().to(device)
         m.load_state_dict(torch.load(str(ckpt), map_location=device))
         m.eval()
         models.append(m)
     return models
-
-
-@lru_cache(maxsize=2)
-def load_unet_ensemble(unet_dir: str = str(UNET_DIR), n_folds: int = N_FOLDS, device_str: str = str(DEVICE)):
-    return _load_fold_ensemble(unet_dir, n_folds, torch.device(device_str), "UNet", _build_unet)
-
-
-@lru_cache(maxsize=2)
-def load_attention_unet_ensemble(unet_dir: str = str(UNET_DIR), n_folds: int = N_FOLDS, device_str: str = str(DEVICE)):
-    return _load_fold_ensemble(unet_dir, n_folds, torch.device(device_str), "UNet++_+_scSE", _build_attention_unet)
-
-
-def ensemble_for_choice(model_choice: str, unet_dir: str = str(UNET_DIR), n_folds: int = N_FOLDS, device_str: str = str(DEVICE)):
-    if model_choice == "unet":
-        return load_unet_ensemble(unet_dir, n_folds, device_str)
-    if model_choice == "attention":
-        return load_attention_unet_ensemble(unet_dir, n_folds, device_str)
-    raise ValueError(f"Unknown model_choice: {model_choice!r} (expected one of {list(MODEL_CHOICES)})")
 
 
 def remove_small_blobs(pred_mask: np.ndarray, min_pixels: int) -> np.ndarray:
@@ -214,15 +172,13 @@ def run_inference(
     lichen_thresh: float = 0.75,
     use_tta: bool = True,
     min_blob_px: int = 500,
-    model_choice: str = "unet",
 ):
     """Run the YOLO gate + UNet ensemble pipeline on one image.
 
-    model_choice: one of "unet" (default), "attention" — see MODEL_CHOICES.
     Retries on CPU if the GPU runs out of memory.
     """
     yolo_model = load_yolo()
-    unet_models = ensemble_for_choice(model_choice)
+    unet_models = load_unet_ensemble()
     if not unet_models:
         raise RuntimeError("No UNet checkpoints found under models/unet_folds/")
 
@@ -230,16 +186,16 @@ def run_inference(
         return _run_inference_impl(
             yolo_model, unet_models, img_rgb, img_bgr,
             use_yolo_gate, yolo_conf, yolo_padding,
-            lichen_thresh, use_tta, min_blob_px, DEVICE, model_choice,
+            lichen_thresh, use_tta, min_blob_px, DEVICE,
         )
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
         logger.warning("GPU out of memory — retrying this image on CPU.")
-        cpu_unet_models = ensemble_for_choice(model_choice, str(UNET_DIR), N_FOLDS, "cpu")
+        cpu_unet_models = load_unet_ensemble(str(UNET_DIR), N_FOLDS, "cpu")
         return _run_inference_impl(
             yolo_model, cpu_unet_models, img_rgb, img_bgr,
             use_yolo_gate, yolo_conf, yolo_padding,
-            lichen_thresh, use_tta, min_blob_px, torch.device("cpu"), model_choice,
+            lichen_thresh, use_tta, min_blob_px, torch.device("cpu"),
             yolo_device="cpu",
         )
 
@@ -247,7 +203,7 @@ def run_inference(
 def _run_inference_impl(
     yolo_model, unet_models, img_rgb, img_bgr,
     use_yolo_gate, yolo_conf, yolo_padding,
-    lichen_thresh, use_tta, min_blob_px, device, model_choice,
+    lichen_thresh, use_tta, min_blob_px, device,
     yolo_device=None,
 ):
     H, W = img_rgb.shape[:2]
@@ -291,5 +247,5 @@ def _run_inference_impl(
         "other_pct": other_pct,
         "predicted_label": predicted_label,
         "confidence_score": confidence_score,
-        "model_version": _MODEL_VERSION_FOR_CHOICE[model_choice],
+        "model_version": MODEL_VERSION,
     }
