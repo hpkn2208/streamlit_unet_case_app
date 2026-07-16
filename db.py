@@ -84,16 +84,49 @@ def _generate_case_code(conn: sqlite3.Connection) -> str:
     return f"CASE-{year}-{count + 1:04d}"
 
 
-def derive_overall_conclusion(labels: list[str], confidences: list[float]) -> str:
-    """Majority vote across per-image predicted labels, tie-broken by highest confidence."""
-    if not labels:
-        return "inconclusive"
+# Clinical safety priority, most severe first: a single RELIABLE lichen-positive image makes
+# the whole case lichen-positive, regardless of how many other images look normal. Same logic
+# for other_lesion over normal. This is deliberately NOT a plain majority vote — diluting one
+# positive finding against several negatives would risk masking a real lesion.
+#
+# "Reliable" means at least one occurrence of that label meets RELIABLE_CONFIDENCE_THRESHOLD.
+# A single low-confidence call (e.g. 44% on a 3-class problem, barely above chance) must not
+# be able to flip the case conclusion by itself — if nothing clears the bar, fall back to a
+# plain majority vote and say so explicitly.
+_SEVERITY_ORDER = ["lichen", "other_lesion", "normal"]
+RELIABLE_CONFIDENCE_THRESHOLD = 0.5
+
+_RULE_NOTE = {
+    "lichen": "at least one image reliably shows lichen",
+    "other_lesion": "at least one image reliably shows another lesion, none reliably show lichen",
+    "normal": "all images are normal",
+}
+
+
+def _pick_winner(labels: list[str], confidences: list[float]) -> tuple[str, bool]:
+    """Returns (winning_label, was_reliable)."""
+    reliable_present = {
+        label for label, conf in zip(labels, confidences) if conf >= RELIABLE_CONFIDENCE_THRESHOLD
+    }
+    for label in _SEVERITY_ORDER:
+        if label in reliable_present:
+            return label, True
+
+    # Nothing cleared the confidence bar — fall back to plain majority vote, tie-broken by confidence.
     counts: dict[str, int] = {}
     best_conf: dict[str, float] = {}
     for label, conf in zip(labels, confidences):
         counts[label] = counts.get(label, 0) + 1
         best_conf[label] = max(best_conf.get(label, 0.0), conf)
     winner = max(counts, key=lambda l: (counts[l], best_conf[l]))
+    return winner, False
+
+
+def derive_overall_conclusion(labels: list[str], confidences: list[float]) -> str:
+    """Most severe RELIABLE finding across all images wins: any lichen > any other lesion > all normal."""
+    if not labels:
+        return "inconclusive"
+    winner, _ = _pick_winner(labels, confidences)
     return CONCLUSION_MAP[winner]
 
 
@@ -104,12 +137,9 @@ def conclusion_reason(labels: list[str], confidences: list[float]) -> str:
 
     counts: dict[str, int] = {}
     conf_sum: dict[str, float] = {}
-    best_conf: dict[str, float] = {}
     for label, conf in zip(labels, confidences):
         counts[label] = counts.get(label, 0) + 1
         conf_sum[label] = conf_sum.get(label, 0.0) + conf
-        best_conf[label] = max(best_conf.get(label, 0.0), conf)
-    winner = max(counts, key=lambda l: (counts[l], best_conf[l]))
 
     n_total = len(labels)
     parts = []
@@ -117,9 +147,19 @@ def conclusion_reason(labels: list[str], confidences: list[float]) -> str:
         n = counts[label]
         avg_conf = conf_sum[label] / n * 100
         image_word = "image" if n == 1 else "images"
-        parts.append(f"{n} of {n_total} {image_word} classified as {PREDICTED_LABEL_DISPLAY[label]} (avg {avg_conf:.1f}% confidence)")
+        conf_label = f"{avg_conf:.1f}% confidence" if n == 1 else f"avg {avg_conf:.1f}% confidence"
+        low_conf_note = ", low confidence" if avg_conf < RELIABLE_CONFIDENCE_THRESHOLD * 100 else ""
+        parts.append(f"{n} of {n_total} {image_word} classified as {PREDICTED_LABEL_DISPLAY[label]} ({conf_label}{low_conf_note})")
 
-    return "; ".join(parts) + f" → majority vote: {PREDICTED_LABEL_DISPLAY[winner]}."
+    winner, reliable = _pick_winner(labels, confidences)
+    if reliable:
+        rule_note = _RULE_NOTE[winner]
+    else:
+        rule_note = (
+            f"no finding reached {int(RELIABLE_CONFIDENCE_THRESHOLD * 100)}% confidence — "
+            f"falling back to the most common label; recommend manual review"
+        )
+    return "; ".join(parts) + f" → case conclusion: {PREDICTED_LABEL_DISPLAY[winner]} ({rule_note})."
 
 
 def create_case(patient_code: str, images: list[dict]) -> str:
