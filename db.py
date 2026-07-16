@@ -1,0 +1,268 @@
+"""SQLite persistence for patient cases — no auth, single-file DB, images on disk."""
+
+import json
+import shutil
+import sqlite3
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+from PIL import Image
+
+DATA_DIR = Path(__file__).parent / "data"
+IMAGES_DIR = DATA_DIR / "images"
+DB_PATH = DATA_DIR / "cases.db"
+
+CONCLUSION_MAP = {"lichen": "lichen_planus", "other_lesion": "other_lesion", "normal": "normal"}
+PREDICTED_LABEL_DISPLAY = {"lichen": "Lichen Planus", "other_lesion": "Other Lesion", "normal": "Normal Mucosa"}
+CONCLUSION_COLOR = {
+    "lichen_planus": "#dc2626",
+    "other_lesion": "#d97706",
+    "normal": "#16a34a",
+    "inconclusive": "#6b7280",
+}
+
+
+def _get_conn() -> sqlite3.Connection:
+    DATA_DIR.mkdir(exist_ok=True)
+    IMAGES_DIR.mkdir(exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db() -> None:
+    conn = _get_conn()
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS cases (
+            id TEXT PRIMARY KEY,
+            case_code TEXT UNIQUE NOT NULL,
+            patient_code TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'analyzed',
+            overall_conclusion TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS images (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES cases(id),
+            filename TEXT NOT NULL,
+            image_path TEXT NOT NULL,
+            image_order INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS detections (
+            id TEXT PRIMARY KEY,
+            image_id TEXT NOT NULL UNIQUE REFERENCES images(id),
+            yolo_detected INTEGER NOT NULL,
+            yolo_boxes TEXT,
+            lichen_pct REAL NOT NULL,
+            other_pct REAL NOT NULL,
+            predicted_label TEXT NOT NULL,
+            confidence_score REAL NOT NULL,
+            overlay_path TEXT NOT NULL,
+            model_version TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES cases(id),
+            note_text TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def _generate_case_code(conn: sqlite3.Connection) -> str:
+    year = datetime.now(timezone.utc).year
+    count = conn.execute(
+        "SELECT COUNT(*) FROM cases WHERE case_code LIKE ?", (f"CASE-{year}-%",)
+    ).fetchone()[0]
+    return f"CASE-{year}-{count + 1:04d}"
+
+
+def derive_overall_conclusion(labels: list[str], confidences: list[float]) -> str:
+    """Majority vote across per-image predicted labels, tie-broken by highest confidence."""
+    if not labels:
+        return "inconclusive"
+    counts: dict[str, int] = {}
+    best_conf: dict[str, float] = {}
+    for label, conf in zip(labels, confidences):
+        counts[label] = counts.get(label, 0) + 1
+        best_conf[label] = max(best_conf.get(label, 0.0), conf)
+    winner = max(counts, key=lambda l: (counts[l], best_conf[l]))
+    return CONCLUSION_MAP[winner]
+
+
+def conclusion_reason(labels: list[str], confidences: list[float]) -> str:
+    """Human-readable explanation of how the case-level conclusion was reached."""
+    if not labels:
+        return "No images to base a conclusion on."
+
+    counts: dict[str, int] = {}
+    conf_sum: dict[str, float] = {}
+    best_conf: dict[str, float] = {}
+    for label, conf in zip(labels, confidences):
+        counts[label] = counts.get(label, 0) + 1
+        conf_sum[label] = conf_sum.get(label, 0.0) + conf
+        best_conf[label] = max(best_conf.get(label, 0.0), conf)
+    winner = max(counts, key=lambda l: (counts[l], best_conf[l]))
+
+    n_total = len(labels)
+    parts = []
+    for label in sorted(counts, key=lambda l: -counts[l]):
+        n = counts[label]
+        avg_conf = conf_sum[label] / n * 100
+        image_word = "image" if n == 1 else "images"
+        parts.append(f"{n} of {n_total} {image_word} classified as {PREDICTED_LABEL_DISPLAY[label]} (avg {avg_conf:.1f}% confidence)")
+
+    return "; ".join(parts) + f" → majority vote: {PREDICTED_LABEL_DISPLAY[winner]}."
+
+
+def create_case(patient_code: str, images: list[dict]) -> str:
+    """images: list of {filename, image_rgb: np.ndarray, detection: dict from run_inference}."""
+    conn = _get_conn()
+    case_id = str(uuid.uuid4())
+    case_code = _generate_case_code(conn)
+    now = datetime.now(timezone.utc).isoformat()
+
+    labels = [img["detection"]["predicted_label"] for img in images]
+    confidences = [img["detection"]["confidence_score"] for img in images]
+    overall_conclusion = derive_overall_conclusion(labels, confidences)
+
+    conn.execute(
+        "INSERT INTO cases (id, case_code, patient_code, status, overall_conclusion, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (case_id, case_code, patient_code, "analyzed", overall_conclusion, now),
+    )
+
+    for order, img in enumerate(images):
+        image_id = str(uuid.uuid4())
+        original_path = IMAGES_DIR / f"{image_id}_original.png"
+        overlay_path = IMAGES_DIR / f"{image_id}_overlay.png"
+        Image.fromarray(img["image_rgb"]).save(original_path)
+        Image.fromarray(img["detection"]["overlay_rgb"]).save(overlay_path)
+
+        conn.execute(
+            "INSERT INTO images (id, case_id, filename, image_path, image_order) VALUES (?, ?, ?, ?, ?)",
+            (image_id, case_id, img["filename"], str(original_path), order),
+        )
+        det = img["detection"]
+        conn.execute(
+            """INSERT INTO detections
+               (id, image_id, yolo_detected, yolo_boxes, lichen_pct, other_pct,
+                predicted_label, confidence_score, overlay_path, model_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(uuid.uuid4()), image_id, int(det["yolo_detected"]), json.dumps(det["yolo_boxes"]),
+                det["lichen_pct"], det["other_pct"], det["predicted_label"], det["confidence_score"],
+                str(overlay_path), det["model_version"],
+            ),
+        )
+
+    conn.commit()
+    conn.close()
+    return case_id
+
+
+def update_detection(image_id: str, detection: dict) -> None:
+    """Overwrites an existing image's detection result (used when re-analyzing with a different model)."""
+    conn = _get_conn()
+    row = conn.execute("SELECT overlay_path FROM detections WHERE image_id = ?", (image_id,)).fetchone()
+    overlay_path = Path(row["overlay_path"]) if row else IMAGES_DIR / f"{image_id}_overlay.png"
+    Image.fromarray(detection["overlay_rgb"]).save(overlay_path)
+
+    conn.execute(
+        """UPDATE detections SET
+               yolo_detected = ?, yolo_boxes = ?, lichen_pct = ?, other_pct = ?,
+               predicted_label = ?, confidence_score = ?, model_version = ?
+           WHERE image_id = ?""",
+        (
+            int(detection["yolo_detected"]), json.dumps(detection["yolo_boxes"]),
+            detection["lichen_pct"], detection["other_pct"], detection["predicted_label"],
+            detection["confidence_score"], detection["model_version"], image_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_case_conclusion(case_id: str, overall_conclusion: str) -> None:
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE cases SET overall_conclusion = ?, status = 'analyzed' WHERE id = ?",
+        (overall_conclusion, case_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_cases() -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        """SELECT c.*, COUNT(i.id) AS image_count
+           FROM cases c LEFT JOIN images i ON i.case_id = c.id
+           GROUP BY c.id ORDER BY c.created_at DESC"""
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_case(case_id: str) -> Optional[dict]:
+    conn = _get_conn()
+    case = conn.execute("SELECT * FROM cases WHERE id = ?", (case_id,)).fetchone()
+    if not case:
+        conn.close()
+        return None
+
+    image_rows = conn.execute(
+        "SELECT * FROM images WHERE case_id = ? ORDER BY image_order", (case_id,)
+    ).fetchall()
+    images = []
+    for img in image_rows:
+        det = conn.execute("SELECT * FROM detections WHERE image_id = ?", (img["id"],)).fetchone()
+        det_dict = None
+        if det:
+            det_dict = dict(det)
+            det_dict["yolo_detected"] = bool(det_dict["yolo_detected"])
+            det_dict["yolo_boxes"] = json.loads(det_dict["yolo_boxes"]) if det_dict["yolo_boxes"] else None
+        images.append({**dict(img), "detection": det_dict})
+
+    notes = conn.execute(
+        "SELECT * FROM notes WHERE case_id = ? ORDER BY created_at", (case_id,)
+    ).fetchall()
+
+    conn.close()
+    return {**dict(case), "images": images, "notes": [dict(n) for n in notes]}
+
+
+def add_note(case_id: str, note_text: str) -> None:
+    conn = _get_conn()
+    note_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO notes (id, case_id, note_text, created_at) VALUES (?, ?, ?, ?)",
+        (note_id, case_id, note_text, now),
+    )
+    conn.execute(
+        "UPDATE cases SET status = 'reviewed' WHERE id = ? AND status = 'analyzed'", (case_id,)
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_all_cases() -> None:
+    """Permanently removes every case, image, detection, and note. Cannot be undone."""
+    conn = _get_conn()
+    conn.execute("DELETE FROM notes")
+    conn.execute("DELETE FROM detections")
+    conn.execute("DELETE FROM images")
+    conn.execute("DELETE FROM cases")
+    conn.commit()
+    conn.close()
+
+    if IMAGES_DIR.exists():
+        shutil.rmtree(IMAGES_DIR)
+    IMAGES_DIR.mkdir(exist_ok=True)
