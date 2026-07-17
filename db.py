@@ -19,8 +19,8 @@ CONCLUSION_MAP = {"lichen": "lichen_planus", "other_lesion": "other_lesion", "no
 PREDICTED_LABEL_DISPLAY = {"lichen": "Lichen Planus", "other_lesion": "Other Lesion", "normal": "Normal Mucosa"}
 CONCLUSION_COLOR = {
     "lichen_planus": "#dc2626",
-    "other_lesion": "#d97706",
-    "normal": "#16a34a",
+    "other_lesion": "#2ecc71",
+    "normal": None,  # no override — inherits the theme's default text color (auto light/dark)
     "inconclusive": "#6b7280",
 }
 

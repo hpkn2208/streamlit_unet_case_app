@@ -13,7 +13,7 @@ CONCLUSION_LABEL = {
 }
 LABEL_DISPLAY = {
     "lichen": ("Lichen Planus", "🔴"),
-    "other_lesion": ("Other Lesion", "🟠"),
+    "other_lesion": ("Other Lesion", "🟢"),
     "normal": ("Normal Mucosa", "⬜"),
 }
 
@@ -38,9 +38,10 @@ st.caption(f"Patient {case['patient_code']} · {case['created_at'][:10]}")
 badge_col1, badge_col2 = st.columns([1, 1])
 badge_col1.markdown(f"**Status:** {STATUS_LABEL.get(case['status'], case['status'])}")
 if case["overall_conclusion"]:
-    color = CONCLUSION_COLOR.get(case["overall_conclusion"], "#6b7280")
+    color = CONCLUSION_COLOR.get(case["overall_conclusion"])
+    style = f"color:{color};font-weight:600" if color else "font-weight:600"
     badge_col2.markdown(
-        f"**AI Conclusion:** <span style='color:{color};font-weight:600'>"
+        f"**AI Conclusion:** <span style='{style}'>"
         f"{CONCLUSION_LABEL.get(case['overall_conclusion'], '—')}</span>",
         unsafe_allow_html=True,
     )
@@ -53,11 +54,12 @@ if not images:
 reason_labels = [img["detection"]["predicted_label"] for img in images if img["detection"]]
 reason_confidences = [img["detection"]["confidence_score"] for img in images if img["detection"]]
 if reason_labels:
-    reason_color = CONCLUSION_COLOR.get(case["overall_conclusion"], "#6b7280")
-    st.markdown(
-        f"<span style='color:{reason_color}'>{conclusion_reason(reason_labels, reason_confidences)}</span>",
-        unsafe_allow_html=True,
-    )
+    reason_color = CONCLUSION_COLOR.get(case["overall_conclusion"])
+    reason_text = conclusion_reason(reason_labels, reason_confidences)
+    if reason_color:
+        st.markdown(f"<span style='color:{reason_color}'>{reason_text}</span>", unsafe_allow_html=True)
+    else:
+        st.markdown(reason_text)
 
 st.divider()
 
@@ -78,10 +80,10 @@ left, right = st.columns(2)
 
 with left:
     st.subheader(selected["filename"])
-    show_overlay = st.radio("View", ["AI Overlay", "Original"], horizontal=True, key=f"view_{selected['id']}") == "AI Overlay"
+    show_overlay = st.radio("View", ["Original", "AI Overlay"], horizontal=True, key=f"view_{selected['id']}") == "AI Overlay"
     if show_overlay and detection:
         st.image(detection["overlay_path"], use_container_width=True)
-        st.caption("🔴 Lichen &nbsp;&nbsp; 🟠 Other lesion &nbsp;&nbsp; ⬜ Normal", unsafe_allow_html=True)
+        st.caption("🔴 Lichen &nbsp;&nbsp; 🟢 Other lesion &nbsp;&nbsp; ⬜ Normal", unsafe_allow_html=True)
     else:
         st.image(selected["image_path"], use_container_width=True)
 
@@ -90,16 +92,6 @@ with right:
         label_text, emoji = LABEL_DISPLAY[detection["predicted_label"]]
         st.markdown(f"### AI Detection Result — {emoji} {label_text}")
         st.metric("Confidence", f"{detection['confidence_score'] * 100:.1f}%")
-
-        st.write("**Lichen area**")
-        st.progress(min(1.0, detection["lichen_pct"] / 100), text=f"{detection['lichen_pct']:.1f}%")
-        st.write("**Other lesion area**")
-        st.progress(min(1.0, detection["other_pct"] / 100), text=f"{detection['other_pct']:.1f}%")
-
-        st.caption(
-            f"YOLO gate: {'Lesion region detected' if detection['yolo_detected'] else 'No ROI — full image'}  \n"
-            f"Model: {detection['model_version']}"
-        )
     else:
         st.info("No detection result for this image.")
 

@@ -30,7 +30,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 PALETTE = {
     1: np.array([220, 50, 50], dtype=np.uint8),   # lichen — red
-    2: np.array([217, 119, 6], dtype=np.uint8),   # other  — amber
+    2: np.array([50, 200, 80], dtype=np.uint8),   # other  — green
 }
 
 MODEL_VERSION = "yolo_best+unet5fold-v1"

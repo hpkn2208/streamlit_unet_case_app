@@ -21,13 +21,12 @@ uploaded_files = st.file_uploader(
     "Upload oral images (PNG / JPG)", type=["png", "jpg", "jpeg"], accept_multiple_files=True
 )
 
-with st.expander("Inference settings (defaults work well)"):
-    yolo_conf = st.slider("YOLO confidence threshold", 0.05, 0.50, 0.15, 0.05)
-    yolo_padding = st.slider("YOLO crop padding (px)", 0, 100, 40, 10)
-    lichen_thresh = st.slider("Lichen probability threshold", 0.30, 0.90, 0.75, 0.05)
-    min_blob_px = st.slider("Min lesion blob (pixels)", 0, 1000, 500, 50)
-    use_tta = st.checkbox("Test-time augmentation (TTA)", value=True)
-    use_yolo_gate = st.checkbox("Enable YOLO gate", value=True)
+YOLO_CONF = 0.15
+YOLO_PADDING = 40
+LICHEN_THRESH = 0.75
+USE_TTA = True
+USE_YOLO_GATE = True
+MIN_BLOB_PX = 200
 
 can_analyze = bool(uploaded_files) and bool(patient_code.strip())
 
@@ -43,8 +42,8 @@ if st.button("Analyze", type="primary", disabled=not can_analyze):
         try:
             detection = run_inference(
                 img_rgb, img_bgr,
-                use_yolo_gate=use_yolo_gate, yolo_conf=yolo_conf, yolo_padding=yolo_padding,
-                lichen_thresh=lichen_thresh, use_tta=use_tta, min_blob_px=min_blob_px,
+                use_yolo_gate=USE_YOLO_GATE, yolo_conf=YOLO_CONF, yolo_padding=YOLO_PADDING,
+                lichen_thresh=LICHEN_THRESH, use_tta=USE_TTA, min_blob_px=MIN_BLOB_PX,
             )
         except RuntimeError as exc:
             st.error(str(exc))

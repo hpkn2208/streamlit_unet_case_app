@@ -17,10 +17,9 @@ if "models_loaded" not in st.session_state:
         load_unet_ensemble()
     st.session_state["models_loaded"] = True
 
-STATUS_LABEL = {"pending": "Pending", "analyzed": "Analyzed", "reviewed": "Reviewed", "finalized": "Finalized"}
 CONCLUSION_LABEL = {
     "lichen_planus": "🔴 Lichen Planus",
-    "other_lesion": "🟠 Other Lesion",
+    "other_lesion": "🟢 Other Lesion",
     "normal": "⬜ Normal Mucosa",
     "inconclusive": "Inconclusive",
 }
@@ -35,34 +34,25 @@ with col1:
 
 cases = list_cases()
 
-total = len(cases)
-pending = sum(1 for c in cases if c["status"] == "pending")
-lichen_positive = sum(1 for c in cases if c["overall_conclusion"] == "lichen_planus")
-
-s1, s2, s3 = st.columns(3)
-s1.metric("Total cases", total)
-s2.metric("Pending analysis", pending)
-s3.metric("Lichen planus positive", lichen_positive)
+st.metric("Total cases", len(cases))
 
 st.divider()
 
 if not cases:
     st.info("No cases yet. Start with **+ New Case** above.")
 else:
-    header = st.columns([2, 2, 2, 1, 2, 2])
-    for col, label in zip(header, ["Case", "Patient", "Date", "Images", "Status", "AI Conclusion"]):
+    header = st.columns([2, 2, 1, 2])
+    for col, label in zip(header, ["Patient ID", "Date", "Number of Images", "Suggested Diagnosis"]):
         col.markdown(f"**{label}**")
 
     for case in cases:
-        row = st.columns([2, 2, 2, 1, 2, 2])
-        if row[0].button(case["case_code"], key=f"open_{case['id']}"):
+        row = st.columns([2, 2, 1, 2])
+        if row[0].button(case["patient_code"], key=f"open_{case['id']}"):
             st.session_state["current_case_id"] = case["id"]
             st.switch_page("pages/2_Case_Detail.py")
-        row[1].write(case["patient_code"])
-        row[2].write(case["created_at"][:10])
-        row[3].write(case["image_count"])
-        row[4].write(STATUS_LABEL.get(case["status"], case["status"]))
-        row[5].write(CONCLUSION_LABEL.get(case["overall_conclusion"], "—"))
+        row[1].write(case["created_at"][:10])
+        row[2].write(case["image_count"])
+        row[3].write(CONCLUSION_LABEL.get(case["overall_conclusion"], "—"))
 
 st.divider()
 
