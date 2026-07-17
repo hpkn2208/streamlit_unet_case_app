@@ -169,9 +169,9 @@ def run_inference(
     use_yolo_gate: bool = True,
     yolo_conf: float = 0.15,
     yolo_padding: int = 40,
-    lichen_thresh: float = 0.75,
+    lichen_thresh: float = 0.65,
     use_tta: bool = True,
-    min_blob_px: int = 500,
+    min_blob_px: int = 200,
 ):
     """Run the YOLO gate + UNet ensemble pipeline on one image.
 

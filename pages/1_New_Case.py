@@ -23,7 +23,7 @@ uploaded_files = st.file_uploader(
 
 YOLO_CONF = 0.15
 YOLO_PADDING = 40
-LICHEN_THRESH = 0.75
+LICHEN_THRESH = 0.65
 USE_TTA = True
 USE_YOLO_GATE = True
 MIN_BLOB_PX = 200
