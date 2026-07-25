@@ -97,11 +97,28 @@ Expects an EfficientNet-B0 encoder, 3-class output (normal / lichen / other), 25
 No Docker, no server to manage:
 
 1. Push this repo to GitHub (weights included — a full set is ~140 MB, well under GitHub's limits)
-2. [share.streamlit.io](https://share.streamlit.io) → sign in with GitHub → **New app**
-3. Point it at this repo, branch `main`, **main file path: `Dashboard.py`** (not `pipeline.py` — that's just the inference logic, it has no UI)
-4. Deploy
+2. Create a free [Supabase](https://supabase.com) project (Postgres) and a free [Cloudflare R2](https://developers.cloudflare.com/r2/) bucket — see [Persistent storage](#persistent-storage) below
+3. [share.streamlit.io](https://share.streamlit.io) → sign in with GitHub → **New app**
+4. Point it at this repo, branch `main`, **main file path: `Dashboard.py`** (not `pipeline.py` — that's just the inference logic, it has no UI)
+5. In app **Settings → Secrets**, paste the keys from `.streamlit/secrets.toml.example` filled in with your real Supabase/R2 values
+6. Deploy
 
 Runs on CPU on the free tier — a few seconds per image instead of ~1s on GPU. No code changes needed; the pipeline already has an automatic CUDA→CPU fallback.
+
+---
+
+## Persistent storage
+
+Streamlit Community Cloud has no persistent disk — its filesystem is rebuilt from git on every redeploy or wake-from-sleep, which used to wipe `data/` (SQLite db + saved images) after about a day of inactivity. This app now stores everything externally instead:
+
+- **Images** → Cloudflare R2 (S3-compatible object storage, free 10GB, no egress fees) via `storage.py`
+- **Case/image/detection/note records** → Supabase Postgres (free 500MB, always-on) via `db.py`
+
+Set up:
+1. Supabase: new project → Project Settings → Database → copy the connection string
+2. Cloudflare R2: create a bucket → create an API token scoped to that bucket (Object Read & Write) → note the Account ID, Access Key ID, Secret Access Key
+3. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill in both (gitignored, never commit real secrets)
+4. `migrations/001_init.sql` documents the schema `db.py::init_db()` creates automatically on first run — run it manually in the Supabase SQL editor only if you want the tables to exist before the app's first boot
 
 ---
 
@@ -114,11 +131,13 @@ streamlit_case_app/
 │   ├── 1_New_Case.py         # upload + run inference
 │   └── 2_Case_Detail.py      # results, overlay toggle, notes
 ├── pipeline.py                # YOLO gate + UNet ensemble, framework-agnostic
-├── db.py                     # SQLite persistence — cases, images, detections, notes
+├── db.py                     # Postgres (Supabase) persistence — cases, images, detections, notes
+├── storage.py                 # Cloudflare R2 image upload/download
+├── migrations/001_init.sql    # reference schema (db.py also creates it automatically)
 ├── models/                   # your trained weights (see above)
 ├── requirements.txt
 ├── packages.txt               # apt packages Streamlit Cloud needs (libGL, etc.)
-└── data/                     # created at runtime — SQLite DB + saved images (gitignored)
+└── .streamlit/secrets.toml.example  # copy to secrets.toml and fill in (gitignored)
 ```
 
 ---
@@ -126,8 +145,7 @@ streamlit_case_app/
 ## Data & privacy
 
 - Cases are keyed by a doctor-assigned **patient code**, not a name or date of birth
-- All data lives in `data/` — a local SQLite file plus original/overlay PNGs — created on first run and excluded from git
-- On Streamlit Community Cloud, `data/` does **not** survive a redeploy or app restart — this is a pilot/demo tool, not a system of record
+- Images live in Cloudflare R2, case/note records live in Supabase Postgres — both persist across redeploys and app restarts (see [Persistent storage](#persistent-storage))
 - No accounts, no authentication — anyone with the app URL can view and create cases
 
 ---
