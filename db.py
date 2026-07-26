@@ -132,20 +132,15 @@ def conclusion_reason(labels: list[str], confidences: list[float]) -> str:
         return "No images to base a conclusion on."
 
     counts: dict[str, int] = {}
-    conf_sum: dict[str, float] = {}
-    for label, conf in zip(labels, confidences):
+    for label in labels:
         counts[label] = counts.get(label, 0) + 1
-        conf_sum[label] = conf_sum.get(label, 0.0) + conf
 
     n_total = len(labels)
     parts = []
     for label in sorted(counts, key=lambda l: -counts[l]):
         n = counts[label]
-        avg_conf = conf_sum[label] / n * 100
         image_word = "image" if n == 1 else "images"
-        conf_label = f"{avg_conf:.1f}% confidence" if n == 1 else f"avg {avg_conf:.1f}% confidence"
-        low_conf_note = ", low confidence" if avg_conf < RELIABLE_CONFIDENCE_THRESHOLD * 100 else ""
-        parts.append(f"{n} of {n_total} {image_word} classified as {PREDICTED_LABEL_DISPLAY[label]} ({conf_label}{low_conf_note})")
+        parts.append(f"{n} of {n_total} {image_word} classified as {PREDICTED_LABEL_DISPLAY[label]}")
 
     winner, reliable = _pick_winner(labels, confidences)
     if reliable:
