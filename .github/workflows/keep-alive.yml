@@ -1,0 +1,26 @@
+name: Keep Streamlit app awake
+
+on:
+  schedule:
+    - cron: "0 */6 * * *" # every 6 hours — comfortably under Streamlit Cloud's 12h sleep threshold
+  workflow_dispatch:
+
+jobs:
+  keep-awake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Visit app (wake it up if asleep)
+        env:
+          APP_URL: https://appunetcaseapp-i2awv6ei5eytzjkya2vqqx.streamlit.app/
+        run: python .github/scripts/keep_awake.py

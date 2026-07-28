@@ -90,8 +90,11 @@ with left:
 with right:
     if detection:
         label_text, emoji = LABEL_DISPLAY[detection["predicted_label"]]
-        st.markdown(f"### AI Detection Result — {emoji} {label_text}")
-        st.metric("Confidence", f"{detection['confidence_score'] * 100:.1f}%")
+        st.markdown("### AI Detection Result")
+        st.markdown(
+            f"<div style='font-size:2rem;font-weight:700'>{emoji} {label_text}</div>",
+            unsafe_allow_html=True,
+        )
     else:
         st.info("No detection result for this image.")
 
