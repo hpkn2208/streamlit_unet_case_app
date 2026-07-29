@@ -23,8 +23,8 @@ uploaded_files = st.file_uploader(
     "Upload oral images (PNG / JPG)", type=["png", "jpg", "jpeg"], accept_multiple_files=True
 )
 
-YOLO_CONF = 0.15
-YOLO_PADDING = 40
+YOLO_CONF = 0.35
+YOLO_PADDING = 80
 LICHEN_THRESH = 0.65
 USE_TTA = True
 USE_YOLO_GATE = True
