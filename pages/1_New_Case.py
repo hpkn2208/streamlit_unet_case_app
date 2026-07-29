@@ -14,6 +14,8 @@ st.caption("Upload one or more clinical images for a patient to run lesion detec
 if st.button("← Back to dashboard"):
     st.switch_page("Dashboard.py")
 
+display_name = st.sidebar.text_input("Your name", key="display_name", placeholder="e.g. Dr. Nguyen")
+
 patient_code = st.text_input("Patient code", placeholder="e.g. PT-0742")
 st.caption("Internal alias only — no patient name or DOB is stored.")
 
@@ -52,6 +54,6 @@ if st.button("Analyze", type="primary", disabled=not can_analyze):
         images_payload.append({"filename": uf.name, "image_rgb": img_rgb, "detection": detection})
         progress.progress((i + 1) / len(uploaded_files), text=f"Analyzed {i + 1}/{len(uploaded_files)}")
 
-    case_id = create_case(patient_code.strip(), images_payload)
+    case_id = create_case(patient_code.strip(), images_payload, created_by=display_name.strip() or None)
     st.session_state["current_case_id"] = case_id
     st.switch_page("pages/2_Case_Detail.py")

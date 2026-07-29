@@ -32,8 +32,11 @@ if not case:
     st.error("Case not found.")
     st.stop()
 
+display_name = st.sidebar.text_input("Your name", key="display_name", placeholder="e.g. Dr. Nguyen")
+
 st.title(case["case_code"])
-st.caption(f"Patient {case['patient_code']} · {case['created_at'][:10]}")
+created_by_suffix = f" · Created by {case['created_by']}" if case.get("created_by") else ""
+st.caption(f"Patient {case['patient_code']} · {case['created_at'][:10]}{created_by_suffix}")
 
 badge_col1, badge_col2 = st.columns([1, 1])
 badge_col1.markdown(f"**Status:** {STATUS_LABEL.get(case['status'], case['status'])}")
@@ -102,11 +105,13 @@ with right:
     st.markdown("### Clinical Notes")
     for note in case["notes"]:
         st.markdown(f"> {note['note_text']}")
-        st.caption(note["created_at"][:19].replace("T", " "))
+        timestamp = note["created_at"][:19].replace("T", " ")
+        author_prefix = f"{note['author']} · " if note.get("author") else ""
+        st.caption(f"{author_prefix}{timestamp}")
 
     draft = st.text_area("Add a note", placeholder="Clinical observations, differential diagnosis, follow-up plan…")
     if st.button("Save Note", disabled=not draft.strip()):
-        add_note(case_id, draft.strip())
+        add_note(case_id, draft.strip(), author=display_name.strip() or None)
         st.rerun()
 
 st.divider()

@@ -35,9 +35,11 @@ def init_db() -> None:
                 patient_code TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'analyzed',
                 overall_conclusion TEXT,
+                created_by TEXT,
                 created_at TEXT NOT NULL
             )
         """))
+        conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS created_by TEXT"))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS images (
                 id TEXT PRIMARY KEY,
@@ -66,9 +68,11 @@ def init_db() -> None:
                 id TEXT PRIMARY KEY,
                 case_id TEXT NOT NULL REFERENCES cases(id),
                 note_text TEXT NOT NULL,
+                author TEXT,
                 created_at TEXT NOT NULL
             )
         """))
+        conn.execute(text("ALTER TABLE notes ADD COLUMN IF NOT EXISTS author TEXT"))
 
 
 def _generate_case_code(conn) -> str:
@@ -153,7 +157,7 @@ def conclusion_reason(labels: list[str], confidences: list[float]) -> str:
     return "; ".join(parts) + f" → case conclusion: {PREDICTED_LABEL_DISPLAY[winner]} ({rule_note})."
 
 
-def create_case(patient_code: str, images: list[dict]) -> str:
+def create_case(patient_code: str, images: list[dict], created_by: str | None = None) -> str:
     """images: list of {filename, image_rgb: np.ndarray, detection: dict from run_inference}."""
     labels = [img["detection"]["predicted_label"] for img in images]
     confidences = [img["detection"]["confidence_score"] for img in images]
@@ -165,10 +169,10 @@ def create_case(patient_code: str, images: list[dict]) -> str:
         now = datetime.now(timezone.utc).isoformat()
 
         conn.execute(
-            text("""INSERT INTO cases (id, case_code, patient_code, status, overall_conclusion, created_at)
-                    VALUES (:id, :case_code, :patient_code, :status, :overall_conclusion, :created_at)"""),
+            text("""INSERT INTO cases (id, case_code, patient_code, status, overall_conclusion, created_by, created_at)
+                    VALUES (:id, :case_code, :patient_code, :status, :overall_conclusion, :created_by, :created_at)"""),
             {"id": case_id, "case_code": case_code, "patient_code": patient_code,
-             "status": "analyzed", "overall_conclusion": overall_conclusion, "created_at": now},
+             "status": "analyzed", "overall_conclusion": overall_conclusion, "created_by": created_by, "created_at": now},
         )
 
         for order, img in enumerate(images):
@@ -243,13 +247,13 @@ def get_case(case_id: str) -> Optional[dict]:
     return {**case, "images": images, "notes": [dict(n) for n in notes]}
 
 
-def add_note(case_id: str, note_text: str) -> None:
+def add_note(case_id: str, note_text: str, author: str | None = None) -> None:
     with _engine().begin() as conn:
         note_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            text("INSERT INTO notes (id, case_id, note_text, created_at) VALUES (:id, :case_id, :note_text, :created_at)"),
-            {"id": note_id, "case_id": case_id, "note_text": note_text, "created_at": now},
+            text("INSERT INTO notes (id, case_id, note_text, author, created_at) VALUES (:id, :case_id, :note_text, :author, :created_at)"),
+            {"id": note_id, "case_id": case_id, "note_text": note_text, "author": author, "created_at": now},
         )
         conn.execute(
             text("UPDATE cases SET status = 'reviewed' WHERE id = :id AND status = 'analyzed'"),

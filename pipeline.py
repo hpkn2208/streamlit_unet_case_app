@@ -24,7 +24,7 @@ MODEL_DIR = Path(__file__).parent / "models"
 YOLO_PT = MODEL_DIR / "yolo_best.pt"
 UNET_DIR = MODEL_DIR / "unet_folds"
 N_FOLDS = 5
-IMG_SIZE = 256
+IMG_SIZE = 384
 NUM_CLASSES = 3
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
