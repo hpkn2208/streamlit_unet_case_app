@@ -8,5 +8,6 @@ albumentations>=2.0.8
 ultralytics>=8.4.84
 Pillow>=12.3.0
 boto3>=1.34.0
-sqlalchemy>=2.0.0
+# <2.1: SQLAlchemy 2.1 defaults postgresql:// to psycopg (v3), but we ship psycopg2-binary
+sqlalchemy>=2.0.0,<2.1
 psycopg2-binary>=2.9.9
